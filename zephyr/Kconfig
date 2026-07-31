@@ -1,0 +1,17 @@
+menu "Pico de Gallo"
+
+config PICO_DE_GALLO
+    bool "Pico de Gallo host bridge"
+    depends on ARCH_POSIX
+    depends on 64BIT
+    default y if DT_HAS_ODP_PICO_DE_GALLO_I2C_ENABLED
+    help
+      Enable support for Pico de Gallo host peripheral bridges.
+
+if PICO_DE_GALLO
+
+source "$(ZEPHYR_PICO_DE_GALLO_MODULE_DIR)/zephyr/drivers/Kconfig"
+
+endif
+
+endmenu

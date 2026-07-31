@@ -361,7 +361,13 @@ pub unsafe extern "C" fn gallo_init_with_serial_number(
 /// when no longer needed.
 #[unsafe(no_mangle)]
 pub extern "C" fn gallo_init_strict() -> *const PicoDeGallo {
-    let inner = lib::PicoDeGallo::new();
+    let inner = match lib::PicoDeGallo::try_new() {
+        Ok(inner) => inner,
+        Err(e) => {
+            eprintln!("gallo_init_strict: device not reachable: {e}");
+            return std::ptr::null();
+        }
+    };
     match block_on(inner.validate()) {
         Ok(_info) => Box::into_raw(Box::new(PicoDeGallo(inner))) as *const PicoDeGallo,
         Err(e) => {
@@ -398,7 +404,13 @@ pub unsafe extern "C" fn gallo_init_strict_with_serial_number(
         eprintln!("Invalid UTF-8 string");
         return std::ptr::null();
     }
-    let inner = lib::PicoDeGallo::new_with_serial_number(serial_number.unwrap());
+    let inner = match lib::PicoDeGallo::try_new_with_serial_number(serial_number.unwrap()) {
+        Ok(inner) => inner,
+        Err(e) => {
+            eprintln!("gallo_init_strict_with_serial_number: device not reachable: {e}");
+            return std::ptr::null();
+        }
+    };
     match block_on(inner.validate()) {
         Ok(_info) => Box::into_raw(Box::new(PicoDeGallo(inner))) as *const PicoDeGallo,
         Err(e) => {
@@ -2782,7 +2794,9 @@ pub const GALLO_CAP_ONEWIRE: u64 = 1 << 6;
 /// Test individual capabilities with bitwise AND:
 ///
 /// ```c
-/// if (info.capabilities & GALLO_CAP_I2C) { /* I2C supported */ }
+/// if (info.capabilities & GALLO_CAP_I2C) {
+///     // I2C supported
+/// }
 /// ```
 #[repr(C)]
 #[derive(Debug)]
