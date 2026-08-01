@@ -3,36 +3,41 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Minimal smoke test for the Pico de Gallo I2C controller. Reads the WHO_AM_I
- * register of an MPU6050 at address 0x68 through the generic Zephyr I2C API.
+ * Small sample/test for the Pico de Gallo I2C controller. Reads the ambient
+ * temperature from a TI TMP117 on the bridged I2C bus via the Zephyr sensor
+ * API.
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
-#include <zephyr/drivers/i2c.h>
-
-#define MPU6050_ADDR 0x68U
-#define REG_WHO_AM_I 0x75U
+#include <zephyr/drivers/sensor.h>
 
 int main(void)
 {
-	const struct device *bus = DEVICE_DT_GET(DT_NODELABEL(pdg_i2c0));
-	uint8_t reg = REG_WHO_AM_I;
-	uint8_t id = 0U;
+	const struct device *tmp117 = DEVICE_DT_GET(DT_NODELABEL(tmp117));
+	struct sensor_value temp;
 	int ret;
 
-	if (!device_is_ready(bus)) {
-		printk("Pico de Gallo I2C bus not ready\n");
+	if (!device_is_ready(tmp117)) {
+		printk("TMP117 not ready (Pico de Gallo bridge connected?)\n");
 		return 0;
 	}
 
-	ret = i2c_write_read(bus, MPU6050_ADDR, &reg, sizeof(reg), &id, sizeof(id));
-	if (ret < 0) {
-		printk("i2c_write_read failed: %d\n", ret);
-		return 0;
-	}
+	while (1) {
+		ret = sensor_sample_fetch(tmp117);
+		if (ret < 0) {
+			printk("sensor_sample_fetch failed: %d\n", ret);
+		}
 
-	printk("WHO_AM_I = 0x%02x\n", id);
+		ret = sensor_channel_get(tmp117, SENSOR_CHAN_AMBIENT_TEMP, &temp);
+		if (ret < 0) {
+			printk("sensor_channel_get failed: %d\n", ret);
+		}
+
+		printk("Temperature: %d.%06d C\n", temp.val1, temp.val2);
+
+		k_sleep(K_SECONDS(1));
+	}
 
 	return 0;
 }
