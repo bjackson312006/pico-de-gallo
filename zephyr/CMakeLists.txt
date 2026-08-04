@@ -4,6 +4,9 @@
 if(CONFIG_PICO_DE_GALLO)
 	if(POLICY CMP0116)
 		cmake_policy(SET CMP0116 NEW)
+
+		# added this because it seems like Corrosion needs it. without it CMake gives a warning when you build
+		set(CMAKE_POLICY_DEFAULT_CMP0116 NEW)
 	endif()
 
 	find_program(PDG_CARGO_EXECUTABLE NAMES cargo)
@@ -37,7 +40,8 @@ if(CONFIG_PICO_DE_GALLO)
 		list(APPEND _pdg_fetchcontent_timestamp_args DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 	endif()
 
-	# Corrosion 0.5 supports Zephyr's CMake 3.20 baseline; 0.6 requires 3.22.
+	# using Corrosion 0.5 because it supports CMake 3.20 (which is Zephyr's baseline CMake version). Corrosion 0.6 requires 3.22 so
+	# it can't be used here
 	FetchContent_Declare(
 		Corrosion
 		URL https://github.com/corrosion-rs/corrosion/archive/refs/tags/v0.5.2.tar.gz
