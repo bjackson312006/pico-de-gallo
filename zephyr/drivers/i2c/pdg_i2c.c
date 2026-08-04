@@ -14,6 +14,8 @@
 
 #define DT_DRV_COMPAT odp_pico_de_gallo_i2c
 
+#include <inttypes.h>
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
@@ -23,7 +25,7 @@
 
 LOG_MODULE_REGISTER(i2c_pico_de_gallo, CONFIG_I2C_LOG_LEVEL);
 
-/* Firmware single-transfer limit (pico_de_gallo_internal::MAX_TRANSFER_SIZE). */
+// Firmware single-transfer limit (pico_de_gallo_internal::MAX_TRANSFER_SIZE).
 #define PDG_I2C_MAX_BUFFER 4096U
 
 struct pdg_i2c_config {
@@ -42,10 +44,7 @@ struct pdg_i2c_data {
 // `speed` is the Zephyr I2C speed (meaning you will probably pass a I2C_SPEED_... macro into the parameter). The returned value is one of the possible pico-de-gallo
 // speed codes accepted by the FFI `gallo_i2c_set_config()` function via the `frequency` parameter:
 // 0 = Standard (100 kHz), 1 = Fast (400 kHz), 2 = Fast+ (1 MHz).
-//
-// note: in the future it seems like it could be nice for the pico de gallo FFI to just have an enum for these values instead of accepting a uint8_t. However, maybe
-//       there's a reason why there isn't.
-static uint8_t speed_to_code_(uint32_t speed)
+static int speed_to_code_(uint32_t speed, uint8_t* code)
 {
 	// the three pico de gallo I2C speed settings
 	static const uint8_t Gallo_Standard = 0U; // (100 kHz)
@@ -60,23 +59,46 @@ static uint8_t speed_to_code_(uint32_t speed)
 	// I2C_SPEED_ULTRA     (5 MHz) 
 
 	switch (speed) {
-		case I2C_SPEED_STANDARD:  return Gallo_Standard;
-		case I2C_SPEED_FAST:      return Gallo_Fast;
-		case I2C_SPEED_FAST_PLUS: return Gallo_FastPlus;
-		case I2C_SPEED_HIGH: 	  return Gallo_FastPlus; // pico de gallo has no speed to match this
-		case I2C_SPEED_ULTRA: 	  return Gallo_FastPlus; // pico de gallo has no speed to match this
-		default: 				  return Gallo_Standard; // default to standard if something else gets passed in 
+		case I2C_SPEED_STANDARD:  { *code = Gallo_Standard; return 0; }
+		case I2C_SPEED_FAST:      { *code = Gallo_Fast; 	return 0; }
+		case I2C_SPEED_FAST_PLUS: { *code = Gallo_FastPlus; return 0; }
+
+		// pico-de-gallo has nothing directly corresponding to I2C_SPEED_HIGH
+		case I2C_SPEED_HIGH: {
+			LOG_ERR("pico-de-gallo does not support the configured I2C speed (I2C_SPEED_HIGH). Returning -EINVAL. Please use one of the supported variants: I2C_SPEED_STANDARD, I2C_SPEED_FAST, or I2C_SPEED_FAST_PLUS.");
+			return -EINVAL; 
+		}
+
+		// pico-de-gallo has nothing directly corresponding to I2C_SPEED_ULTRA
+		case I2C_SPEED_ULTRA: { 
+			LOG_ERR("pico-de-gallo does not support the configured I2C speed (I2C_SPEED_ULTRA). Returning -EINVAL. Please use one of the supported variants: I2C_SPEED_STANDARD, I2C_SPEED_FAST, or I2C_SPEED_FAST_PLUS.");
+			return -EINVAL; 
+		}
+
+
+		// unknown
+		default: {
+			LOG_ERR("pico-de-gallo does not support the configured I2C speed (speed=%" PRIu32 "). Returning -EINVAL. Please use one of the supported variants: I2C_SPEED_STANDARD, I2C_SPEED_FAST, or I2C_SPEED_FAST_PLUS.", speed);
+			return -EINVAL; 
+		}
 	}
 }
 
 // helper to map a `clock_frequency` in Hz to a Zephyr I2C speed macro
-static uint32_t freq_to_speed_(uint32_t clock_frequency)
+static int freq_to_speed_(uint32_t clock_frequency, uint32_t* speed)
 {
-	if 		(clock_frequency <= 100000U)  { return I2C_SPEED_STANDARD; }  // less than or equal to 100 kHz, use I2C_SPEED_STANDARD
-	else if (clock_frequency <= 400000U)  { return I2C_SPEED_FAST; } 	  // between 100 kHz..=400 kHz, use I2C_SPEED_FAST
-	else if (clock_frequency <= 1000000U) { return I2C_SPEED_FAST_PLUS; } // between 400 kHz..=1 MHz, use I2C_SPEED_FAST_PLUS
-	else if (clock_frequency <= 3400000U) { return I2C_SPEED_HIGH; }	  // between 1 MHz..=3.4 MHz, use I2C_SPEED_HIGH
-	return I2C_SPEED_ULTRA; 										  	  // otherwise (greater than 3.4 MHz) use I2C_SPEED_ULTRA
+	switch(clock_frequency) {
+		case 100000U: 	{ *speed = I2C_SPEED_STANDARD; 	return 0; }
+		case 400000U: 	{ *speed = I2C_SPEED_FAST; 	   	return 0; }
+		case 1000000U: 	{ *speed = I2C_SPEED_FAST_PLUS; return 0; }
+		case 3400000U: 	{ *speed = I2C_SPEED_HIGH; 	 	return 0; }
+		case 5000000U: 	{ *speed = I2C_SPEED_ULTRA; 	return 0; }
+
+		default: {
+			LOG_ERR("Invalid I2C frequency provided (frequency=% " PRIu32 "). Returning -EINVAL. Try using one of the following: I2C_SPEED_STANDARD (100_000 Hz), I2C_SPEED_FAST (400_000 Hz), I2C_SPEED_FAST_PLUS (1_000_000 Hz), I2C_SPEED_HIGH (3_400_000 Hz), or I2C_SPEED_ULTRA (5_000_000 Hz).");
+			return -EINVAL;
+		}
+	}
 }
 
 static int pdg_i2c_configure(const struct device *dev, uint32_t dev_config)
@@ -85,17 +107,26 @@ static int pdg_i2c_configure(const struct device *dev, uint32_t dev_config)
 	int ret;
 
 	if ((dev_config & I2C_ADDR_10_BITS) != 0U) {
+		LOG_ERR("10-bit I2C addressing (I2C_ADDR_10_BITS) is not supported. Returning -ENOTSUP.");
 		return -ENOTSUP;
 	}
 
 	if ((dev_config & I2C_MODE_CONTROLLER) == 0U) {
+		LOG_ERR("The configured I2C peripheral mode is not supported. I2C_MODE_CONTROLLER is required. Returning -ENOTSUP.");
 		return -ENOTSUP;
 	}
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	ret = pdg_i2c_bottom_set_config(data->ctx, speed_to_code_(I2C_SPEED_GET(dev_config)));
+
+	uint8_t code = 0;
+	int ret = speed_to_code_(I2C_SPEED_GET(dev_config, &code));
+	if (ret < 0) { return ret; }
+
+	ret = pdg_i2c_bottom_set_config(data->ctx, code);
 	if (ret == 0) {
 		data->dev_config = dev_config;
+	} else {
+		LOG_ERR("Failed to set I2C config: errno=%d", ret);
 	}
 	k_mutex_unlock(&data->lock);
 
@@ -106,7 +137,9 @@ static int pdg_i2c_get_config(const struct device *dev, uint32_t *dev_config)
 {
 	struct pdg_i2c_data *data = dev->data;
 
+	k_mutex_lock(&data->lock, K_FOREVER);
 	*dev_config = data->dev_config;
+	k_mutex_unlock(&data->lock);
 
 	return 0;
 }
@@ -117,40 +150,57 @@ static int pdg_i2c_transfer(const struct device *dev, struct i2c_msg *msgs, uint
 	int ret;
 
 	if (addr > 0x7fU) {
+		LOG_ERR("I2C address 0x%04x exceeds the 7-bit address range. Returning -EINVAL.", addr);
 		return -EINVAL;
 	}
 
+	// validate the provided messages
 	for (uint8_t i = 0U; i < num_msgs; i++) {
+
+		// make sure a message with a nonzero length has a buffer that exists
+		if ((msgs[i].buf == NULL) && (msgs[i].len != 0U)) {
+			LOG_ERR("I2C message %u has length %u but no buffer. Returning -EINVAL.", i, msgs[i].len);
+			return -EINVAL;
+		}
+
+		// make sure I2C_MSG_ADDR_10_BITS isn't requested since it isn't supported
 		if ((msgs[i].flags & I2C_MSG_ADDR_10_BITS) != 0U) {
+			LOG_ERR("I2C message %u is requesting 10-bit addressing (I2C_MSG_ADDR_10_BITS), but this addressing is unsupported. Returning -ENOTSUP.", i);
 			return -ENOTSUP;
 		}
 
+		// make sure the message size doesn't exceed pico-de-gallo's max buffer size
 		if (msgs[i].len > PDG_I2C_MAX_BUFFER) {
-			return -EINVAL;
+			LOG_ERR("I2C message %u is %u bytes, which exceeds the %u-byte transfer limit. Returning -EMSGSIZE.", i, msgs[i].len, PDG_I2C_MAX_BUFFER);
+			return -EMSGSIZE;
 		}
 	}
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 
 	if (num_msgs == 1U) {
+		// single read operation
 		if ((msgs[0].flags & I2C_MSG_READ) != 0U) {
-			ret = pdg_i2c_bottom_read(data->ctx, addr, msgs[0].buf,
-						  msgs[0].len);
+			ret = pdg_i2c_bottom_read(data->ctx, addr, msgs[0].buf, msgs[0].len);
+			if (ret < 0) {
+				LOG_ERR("I2C read from address 0x%02x failed (%u bytes): errno=%d.", addr, msgs[0].len, ret);
+			}
+		// single write operation
 		} else {
-			ret = pdg_i2c_bottom_write(data->ctx, addr, msgs[0].buf,
-						   msgs[0].len);
+			ret = pdg_i2c_bottom_write(data->ctx, addr, msgs[0].buf, msgs[0].len);
+			if (ret < 0) {
+				LOG_ERR("I2C write to address 0x%02x failed (%u bytes): errno=%d.", addr, msgs[0].len, ret);
+			}
 		}
-	} else if ((num_msgs == 2U) &&
-		   ((msgs[0].flags & I2C_MSG_READ) == 0U) &&
-		   ((msgs[1].flags & I2C_MSG_READ) != 0U)) {
-		ret = pdg_i2c_bottom_write_read(data->ctx, addr,
-						msgs[0].buf, msgs[0].len,
-						msgs[1].buf, msgs[1].len);
+	// single read-write operation (two messages)
+	} else if ((num_msgs == 2U) && ((msgs[0].flags & I2C_MSG_READ) == 0U) && ((msgs[1].flags & I2C_MSG_READ) != 0U)) {
+		ret = pdg_i2c_bottom_write_read(data->ctx, addr, msgs[0].buf, msgs[0].len, msgs[1].buf, msgs[1].len);
+		if (ret < 0) {
+			LOG_ERR("I2C write-read at address 0x%02x failed (TX=%u bytes, RX=%u bytes): errno=%d.", addr, msgs[0].len, msgs[1].len, ret);
+		}
+	// unsupported operation
 	} else {
-		/* The bridge cannot express arbitrary scatter/gather
-		 * transactions with repeated starts. Supported forms are a
-		 * single write, a single read, and a write followed by a read.
-		 */
+		LOG_ERR("An unsupported I2C transaction was requested at address 0x%02x, for %u messages. Returning -ENOTSUP. The bridge cannot express arbitrary scatter/gather transactions with repeated starts. Supported forms are: read, write, and write-read.", addr, num_msgs);
 		ret = -ENOTSUP;
 	}
 
@@ -167,21 +217,44 @@ static DEVICE_API(i2c, pdg_i2c_api) = {
 
 static int pdg_i2c_init(const struct device *dev)
 {
+	int ret = 0;
 	const struct pdg_i2c_config *config = dev->config;
 	struct pdg_i2c_data *data = dev->data;
-	uint32_t speed = freq_to_speed_(config->clock_frequency);
+
+	uint32_t speed = 0;
+	ret = freq_to_speed_(config->clock_frequency, &speed);
+	if(ret < 0) {
+		return ret;
+	}
 
 	k_mutex_init(&data->lock);
 
 	data->ctx = pdg_i2c_bottom_open(config->serial);
 	if (data->ctx == NULL) {
-		LOG_ERR("Failed to open Pico de Gallo bridge (device connected?)");
+		if (config->serial != NULL) {
+    		LOG_ERR("Failed to open Pico de Gallo bridge with serial number %s. Returning -ENODEV.", config->serial);
+		} else {
+    		LOG_ERR("Failed to open a Pico de Gallo bridge. Returning -ENODEV.");
+		}
 		return -ENODEV;
 	}
 
-	data->dev_config = I2C_MODE_CONTROLLER | I2C_SPEED_SET(speed);
+	uint32_t dev_config_ = I2C_MODE_CONTROLLER | I2C_SPEED_SET(speed);
 
-	return pdg_i2c_bottom_set_config(data->ctx, speed_to_code_(speed));
+	uint8_t code = 0;
+	ret = speed_to_code_(speed, &code);
+	if(ret < 0) { return ret; }
+
+	ret = pdg_i2c_bottom_set_config(data->ctx, code);
+	if (ret < 0) {
+		LOG_ERR("Failed to set I2C config: errno=%d", ret);
+		pdg_i2c_bottom_close(data->ctx);
+		data->ctx = NULL;
+		return ret;
+	}
+
+	data->dev_config = dev_config_;
+	return ret;
 }
 
 #define PDG_I2C_INIT(inst)							\

@@ -26,7 +26,7 @@
 
 LOG_MODULE_REGISTER(spi_pico_de_gallo, CONFIG_SPI_LOG_LEVEL);
 
-/* Firmware single-transfer limit (pico_de_gallo_internal::MAX_TRANSFER_SIZE). */
+// Firmware single-transfer limit (pico_de_gallo_internal::MAX_TRANSFER_SIZE).
 #define PDG_SPI_MAX_BUFFER 4096U
 
 struct pdg_spi_config {
