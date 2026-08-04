@@ -15,60 +15,35 @@
 #include <stdint.h>
 
 #include "pico_de_gallo.h"
-
+#include "common.h"
 #include "pdg_i2c_bottom.h"
-
-static int status_to_errno(Status status)
-{
-	switch (status) {
-	case Ok:
-		return 0;
-	case InvalidArgument:
-	case BufferTooLong:
-	case I2cAddressOutOfRange:
-		return -EINVAL;
-	case I2cNack:
-		return -ENXIO;
-	default:
-		return -EIO;
-	}
-}
 
 void *pdg_i2c_bottom_open(const char *serial)
 {
-	const struct PicoDeGallo *gallo;
-
-	if (serial != NULL && serial[0] != '\0') {
-		gallo = gallo_init_strict_with_serial_number(serial);
-	} else {
-		gallo = gallo_init_strict();
-	}
-
-	return (void *)gallo;
+	return pdg_common_bottom_open(serial);
 }
 
 void pdg_i2c_bottom_close(void *ctx)
 {
-	gallo_free((const struct PicoDeGallo *)ctx);
+	pdg_common_bottom_close(ctx);
 }
 
 int pdg_i2c_bottom_set_config(void *ctx, uint8_t frequency)
 {
-	return status_to_errno(
-		gallo_i2c_set_config((const struct PicoDeGallo *)ctx, frequency));
+	return pdg_common_status_to_errno(gallo_i2c_set_config((const struct PicoDeGallo *)ctx, frequency));
 }
 
 int pdg_i2c_bottom_write(void *ctx, uint16_t addr, const uint8_t *buf, size_t len)
 {
-	return status_to_errno(gallo_i2c_write((const struct PicoDeGallo *)ctx, (uint8_t)addr, buf, len));
+	return pdg_common_status_to_errno(gallo_i2c_write((const struct PicoDeGallo *)ctx, (uint8_t)addr, buf, len));
 }
 
 int pdg_i2c_bottom_read(void *ctx, uint16_t addr, uint8_t *buf, size_t len)
 {
-	return status_to_errno(gallo_i2c_read((const struct PicoDeGallo *)ctx, (uint8_t)addr, buf, len));
+	return pdg_common_status_to_errno(gallo_i2c_read((const struct PicoDeGallo *)ctx, (uint8_t)addr, buf, len));
 }
 
 int pdg_i2c_bottom_write_read(void *ctx, uint16_t addr, const uint8_t *tx, size_t txlen, uint8_t *rx, size_t rxlen)
 {
-	return status_to_errno(gallo_i2c_write_read((const struct PicoDeGallo *)ctx, (uint8_t)addr, tx, txlen, rx, rxlen));
+	return pdg_common_status_to_errno(gallo_i2c_write_read((const struct PicoDeGallo *)ctx, (uint8_t)addr, tx, txlen, rx, rxlen));
 }

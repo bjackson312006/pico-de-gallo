@@ -24,7 +24,7 @@
 LOG_MODULE_REGISTER(i2c_pico_de_gallo, CONFIG_I2C_LOG_LEVEL);
 
 /* Firmware single-transfer limit (pico_de_gallo_internal::MAX_TRANSFER_SIZE). */
-#define PDG_I2C_MAX_XFER 4096U
+#define PDG_I2C_MAX_BUFFER 4096U
 
 struct pdg_i2c_config {
 	const char *serial;
@@ -125,7 +125,7 @@ static int pdg_i2c_transfer(const struct device *dev, struct i2c_msg *msgs, uint
 			return -ENOTSUP;
 		}
 
-		if (msgs[i].len > PDG_I2C_MAX_XFER) {
+		if (msgs[i].len > PDG_I2C_MAX_BUFFER) {
 			return -EINVAL;
 		}
 	}

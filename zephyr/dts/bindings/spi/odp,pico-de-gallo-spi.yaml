@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Open Device Partnership and Contributors
+# SPDX-License-Identifier: MIT
+
+description: |
+  Pico de Gallo USB-attached SPI controller.
+
+  This controller forwards Zephyr SPI API calls to a Pico de Gallo USB bridge
+  connected to the host running native_sim. Devices on the bus are declared as
+  ordinary child nodes using their own vendor,device compatible.
+
+compatible: "odp,pico-de-gallo-spi"
+
+include: spi-controller.yaml
+
+properties:
+  serial-number:
+    type: string
+    description: |
+      Optional USB serial number used to select a specific Pico de Gallo bridge
+      when more than one is connected to the host. If omitted, the first
+      matching device is used.
