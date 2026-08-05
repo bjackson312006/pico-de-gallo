@@ -101,6 +101,27 @@ static int freq_to_speed_(uint32_t clock_frequency, uint32_t* speed)
 	}
 }
 
+// helper for pdg_i2c_transfer() to validate a group of messages and make sure it is in a format that is supported by the current pico-de-gallo ffi API
+static int validate_group_(const struct i2c_msg *msgs, uint8_t first, uint8_t count)
+{
+	// The current FFI supports one read, one write, or one write
+	// followed by a repeated-start read within a STOP-delimited group.
+
+	if (count == 1U) {
+		return 0;
+	}
+
+	if ((count == 2U) &&
+	    ((msgs[first].flags & I2C_MSG_READ) == 0U) &&
+	    ((msgs[first + 1U].flags & I2C_MSG_READ) != 0U) &&
+	    ((msgs[first + 1U].flags & I2C_MSG_RESTART) != 0U)) {
+		return 0;
+	}
+
+	LOG_ERR("Unsupported I2C message group starting at message %u with %u messages. Returning -ENOTSUP.", first, count);
+	return -ENOTSUP;
+}
+
 static int pdg_i2c_configure(const struct device *dev, uint32_t dev_config)
 {
 	struct pdg_i2c_data *data = dev->data;
@@ -116,12 +137,11 @@ static int pdg_i2c_configure(const struct device *dev, uint32_t dev_config)
 		return -ENOTSUP;
 	}
 
-	k_mutex_lock(&data->lock, K_FOREVER);
-
 	uint8_t code = 0;
-	int ret = speed_to_code_(I2C_SPEED_GET(dev_config, &code));
+	ret = speed_to_code_(I2C_SPEED_GET(dev_config), &code);
 	if (ret < 0) { return ret; }
 
+	k_mutex_lock(&data->lock, K_FOREVER);
 	ret = pdg_i2c_bottom_set_config(data->ctx, code);
 	if (ret == 0) {
 		data->dev_config = dev_config;
@@ -147,6 +167,7 @@ static int pdg_i2c_get_config(const struct device *dev, uint32_t *dev_config)
 static int pdg_i2c_transfer(const struct device *dev, struct i2c_msg *msgs, uint8_t num_msgs, uint16_t addr)
 {
 	struct pdg_i2c_data *data = dev->data;
+	uint8_t group_start = 0U;
 	int ret;
 
 	if (addr > 0x7fU) {
@@ -157,9 +178,10 @@ static int pdg_i2c_transfer(const struct device *dev, struct i2c_msg *msgs, uint
 	// validate the provided messages
 	for (uint8_t i = 0U; i < num_msgs; i++) {
 
-		// make sure a message with a nonzero length has a buffer that exists
-		if ((msgs[i].buf == NULL) && (msgs[i].len != 0U)) {
-			LOG_ERR("I2C message %u has length %u but no buffer. Returning -EINVAL.", i, msgs[i].len);
+		// make sure msgs isn't null
+		// (the Zephyr API should already enforce this via the i2c_transfer() docs but still going to check here)
+		if ((msgs[i].buf == NULL)) {
+			LOG_ERR("NULL buffer provided for I2C message %u. Returning -EINVAL.", i, msgs[i].len);
 			return -EINVAL;
 		}
 
@@ -174,34 +196,74 @@ static int pdg_i2c_transfer(const struct device *dev, struct i2c_msg *msgs, uint
 			LOG_ERR("I2C message %u is %u bytes, which exceeds the %u-byte transfer limit. Returning -EMSGSIZE.", i, msgs[i].len, PDG_I2C_MAX_BUFFER);
 			return -EMSGSIZE;
 		}
+
+		if ((msgs[i].flags & I2C_MSG_STOP) != 0U) {
+            ret = validate_group_(msgs, group_start, i - group_start + 1U);
+            if (ret < 0) {
+                return ret;
+            }
+
+            group_start = i + 1U;
+        }
 	}
 
-	k_mutex_lock(&data->lock, K_FOREVER);
+	// pico-de-gallo-ffi's I2C currently always generates STOP. The Zephyr should API conform to this by default but
+	// it is still possible to manually attempt low-level I2C transactions that omit STOP, so we gotta check for that:
+	if (group_start != num_msgs) {
+        LOG_ERR("A final I2C transaction without STOP is unsupported. Returning -ENOTSUP.");
+        return -ENOTSUP;
+    }
 
-	if (num_msgs == 1U) {
-		// single read operation
-		if ((msgs[0].flags & I2C_MSG_READ) != 0U) {
-			ret = pdg_i2c_bottom_read(data->ctx, addr, msgs[0].buf, msgs[0].len);
-			if (ret < 0) {
-				LOG_ERR("I2C read from address 0x%02x failed (%u bytes): errno=%d.", addr, msgs[0].len, ret);
+	// okay at this point we know all the groups are known to be supported so we can start actually transferring
+	k_mutex_lock(&data->lock, K_FOREVER);
+	group_start = 0U;
+	ret = 0;
+
+	// loop through every message and send one FFI call per "message group"
+	// a "message group" contains all messages since the previous STOP
+	// a "message group" can either be one or two messages, as enforced by validate_group_().
+	// the purpose of sending messages in  a "message group" is because pico-de-gallo-ffi uses STOP for each individual operation
+	for (uint8_t i = 0U; i < num_msgs; i++) {
+		struct i2c_msg *first;
+		uint8_t group_count;
+
+		// if this message isn't a STOP it isn't the end to a message group, so we can skip
+		if ((msgs[i].flags & I2C_MSG_STOP) == 0U) {
+			continue;
+		}
+
+		first = &msgs[group_start];
+		group_count = i - group_start + 1U;
+
+		if (group_count == 1U) {
+			// group is just a single READ message
+			if ((first->flags & I2C_MSG_READ) != 0U) {
+				ret = pdg_i2c_bottom_read(data->ctx, addr, first->buf, first->len);
+				if (ret < 0) {
+					LOG_ERR("I2C read message %u from address 0x%02x failed (%u bytes): errno=%d.", group_start, addr, first->len, ret);
+				}
+			// group is just a single WRITE message
+			} else {
+				ret = pdg_i2c_bottom_write(data->ctx, addr, first->buf, first->len);
+				if (ret < 0) {
+					LOG_ERR("I2C write message %u to address 0x%02x failed (%u bytes): errno=%d.", group_start, addr, first->len, ret);
+				}
 			}
-		// single write operation
+		// group is a two-message WRITE READ operation
 		} else {
-			ret = pdg_i2c_bottom_write(data->ctx, addr, msgs[0].buf, msgs[0].len);
+			struct i2c_msg *second = &msgs[group_start + 1U];
+
+			ret = pdg_i2c_bottom_write_read(data->ctx, addr, first->buf, first->len, second->buf, second->len);
 			if (ret < 0) {
-				LOG_ERR("I2C write to address 0x%02x failed (%u bytes): errno=%d.", addr, msgs[0].len, ret);
+				LOG_ERR("I2C write-read messages %u-%u at address 0x%02x failed (TX=%u bytes, RX=%u bytes): errno=%d.", group_start, group_start + 1U, addr, first->len, second->len, ret);
 			}
 		}
-	// single read-write operation (two messages)
-	} else if ((num_msgs == 2U) && ((msgs[0].flags & I2C_MSG_READ) == 0U) && ((msgs[1].flags & I2C_MSG_READ) != 0U)) {
-		ret = pdg_i2c_bottom_write_read(data->ctx, addr, msgs[0].buf, msgs[0].len, msgs[1].buf, msgs[1].len);
+
 		if (ret < 0) {
-			LOG_ERR("I2C write-read at address 0x%02x failed (TX=%u bytes, RX=%u bytes): errno=%d.", addr, msgs[0].len, msgs[1].len, ret);
+			break;
 		}
-	// unsupported operation
-	} else {
-		LOG_ERR("An unsupported I2C transaction was requested at address 0x%02x, for %u messages. Returning -ENOTSUP. The bridge cannot express arbitrary scatter/gather transactions with repeated starts. Supported forms are: read, write, and write-read.", addr, num_msgs);
-		ret = -ENOTSUP;
+
+		group_start = i + 1U;
 	}
 
 	k_mutex_unlock(&data->lock);
@@ -243,7 +305,11 @@ static int pdg_i2c_init(const struct device *dev)
 
 	uint8_t code = 0;
 	ret = speed_to_code_(speed, &code);
-	if(ret < 0) { return ret; }
+	if(ret < 0) {
+		pdg_i2c_bottom_close(data->ctx); 
+		data->ctx = NULL;
+		return ret; 
+	}
 
 	ret = pdg_i2c_bottom_set_config(data->ctx, code);
 	if (ret < 0) {
