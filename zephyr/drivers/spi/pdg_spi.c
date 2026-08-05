@@ -292,6 +292,7 @@ static int pdg_spi_init(const struct device *dev)
 
 	k_mutex_init(&data->lock);
 
+    LOG_INF("Opening Pico de Gallo SPI bridge");
 	data->ctx = pdg_spi_bottom_open(config->serial);
     if (data->ctx == NULL) {
         if (config->serial != NULL) {
@@ -302,6 +303,7 @@ static int pdg_spi_init(const struct device *dev)
 
         return -ENODEV;
     }
+	LOG_INF("Pico de Gallo SPI bridge ready");
 
 	return 0;
 }

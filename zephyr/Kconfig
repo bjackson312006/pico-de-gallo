@@ -10,6 +10,10 @@ config PICO_DE_GALLO
 
 if PICO_DE_GALLO
 
+# Keep zephyr tickrate consistent with embassy tickrate
+config SYS_CLOCK_TICKS_PER_SEC
+    default 10000
+
 source "$(ZEPHYR_PICO_DE_GALLO_MODULE_DIR)/zephyr/drivers/Kconfig"
 
 endif
