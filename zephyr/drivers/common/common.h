@@ -34,4 +34,4 @@ int pdg_common_status_to_errno(Status status);
 }
 #endif
 
-#endif /* PDG_SPI_BOTTOM_H */
+#endif /* PDG_COMMON_H */

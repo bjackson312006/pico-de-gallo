@@ -1,22 +1,15 @@
 #include <errno.h>
 #include "common.h"
+#include "gallo_registry.h"
 
 void *pdg_common_bottom_open(const char *serial)
 {
-	const struct PicoDeGallo *gallo;
-
-	if (serial != NULL && serial[0] != '\0') {
-		gallo = gallo_init_strict_with_serial_number(serial);
-	} else {
-		gallo = gallo_init_strict();
-	}
-
-	return (void *)gallo;
+    return (void *)pdg_registry_open(serial);
 }
 
 void pdg_common_bottom_close(void *ctx)
 {
-	gallo_free((const struct PicoDeGallo *)ctx);
+    pdg_registry_close((const struct PicoDeGallo *)ctx);
 }
 
 int pdg_common_status_to_errno(Status status)
