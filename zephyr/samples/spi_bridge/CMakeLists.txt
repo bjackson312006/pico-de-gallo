@@ -3,6 +3,8 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+set(SHIELD pico_de_gallo)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(pdg_spi_bridge)
 

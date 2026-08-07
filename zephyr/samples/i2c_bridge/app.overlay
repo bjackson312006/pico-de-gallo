@@ -4,18 +4,13 @@
  * SPDX-License-Identifier: MIT
  */
 
-/ {
-	pdg_i2c0: pdg-i2c {
-		compatible = "odp,pico-de-gallo-i2c";
-		clock-frequency = <400000>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-		status = "okay";
 
-		tmp117: tmp117@48 {
-			compatible = "ti,tmp11x";
-			reg = <0x48>;
-			status = "okay";
-		};
+&pdg_i2c0 {
+	status = "okay";
+
+	tmp117: tmp117@48 {
+		compatible = "ti,tmp11x";
+		reg = <0x48>;
+		status = "okay";
 	};
 };
