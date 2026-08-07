@@ -58,10 +58,18 @@ if(CONFIG_PICO_DE_GALLO)
 	)
 	FetchContent_MakeAvailable(pico_de_gallo_ffi_src)
 
+	# this keeps Cargo from treating this generated dependency as a member of a
+	# parent workspace when the Zephyr build directory is inside this repository.
+	set(_pdg_ffi_manifest "${pico_de_gallo_ffi_src_SOURCE_DIR}/Cargo.toml")
+	file(READ "${_pdg_ffi_manifest}" _pdg_ffi_manifest_contents)
+	if(NOT _pdg_ffi_manifest_contents MATCHES "(^|[\r\n])[ \t]*\\[workspace\\][ \t]*([\r\n]|$)")
+		file(APPEND "${_pdg_ffi_manifest}" "\n[workspace]\n")
+	endif()
+
 	get_property(_pdg_shared_libs_supported GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS)
 	set_property(GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS TRUE)
 	corrosion_import_crate(
-		MANIFEST_PATH "${pico_de_gallo_ffi_src_SOURCE_DIR}/Cargo.toml"
+		MANIFEST_PATH "${_pdg_ffi_manifest}"
 		CRATES pico-de-gallo-ffi
 		CRATE_TYPES cdylib
 		PROFILE release
